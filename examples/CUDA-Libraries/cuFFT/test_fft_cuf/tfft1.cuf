@@ -1,0 +1,52 @@
+!
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+!
+
+program cufft2dTest
+  use cufft
+  implicit none
+  integer, parameter :: n=450
+  complex :: a(n,n),b(n,n)
+  complex, device :: a_d(n,n), b_d(n,n)
+  real :: ar(n,n),br(n,n),x
+  real, device :: ar_d(n,n), br_d(n,n)
+  integer :: plan, ierr
+  logical passing
+
+  a = 1; a_d = a
+  ar = 1; ar_d = ar
+
+  ierr = cufftPlan2D(plan,n,n,CUFFT_C2C)
+  ierr = ierr + cufftExecC2C(plan,a_d,b_d,CUFFT_FORWARD)
+  b = b_d
+  write(*,*) maxval(real(b)),sum(b),450*450
+  ierr = ierr + cufftExecC2C(plan,b_d,b_d,CUFFT_INVERSE)
+  b = b_d
+  x = maxval(abs(a-b/(n*n)))
+  write(*,*) 'Max error C2C: ', x
+  passing = x .le. 1.0e-5
+
+  ierr = ierr + cufftPlan2D(plan,n,n,CUFFT_R2C)
+  ierr = ierr + cufftExecR2C(plan,ar_d,b_d)
+  ierr = ierr + cufftPlan2D(plan,n,n,CUFFT_C2R)
+  ierr = ierr + cufftExecC2R(plan,b_d,br_d)
+  br = br_d
+  x = maxval(abs(ar-br/(n*n)))
+  write(*,*) 'Max error R2C/C2R: ', x
+  passing = passing .and. (x .le. 1.0e-5)
+
+  ierr = ierr + cufftDestroy(plan)
+  print *,ierr
+  passing = passing .and. (ierr .eq. 0)
+  if (passing) then
+    print *,"Test PASSED"
+  else
+    print *,"Test FAILED"
+  endif
+end program cufft2dTest

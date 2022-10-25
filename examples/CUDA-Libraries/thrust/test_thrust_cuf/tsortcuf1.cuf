@@ -1,0 +1,25 @@
+program t
+interface sort
+  subroutine sort_int(array, n) &
+    bind(C,name='thrust_int_sort_wrapper')
+  integer, device, dimension(*) :: array
+  integer, value :: n
+  end subroutine
+end interface
+integer, parameter :: n = 100
+integer, device :: a_d(n)
+integer :: a_h(n)
+!$cuf kernel do
+do i = 1, n
+   a_d(i) = 1 + mod(47*i,n)
+end do
+call sort(a_d, n)
+a_h = a_d
+nres  = count(a_h .eq. (/(i,i=1,n)/))
+write (*,'(10(1x,i4))') a_h
+if (nres.eq.n) then
+  print *,"test PASSED"
+else
+  print *,"test FAILED"
+endif
+end

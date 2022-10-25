@@ -1,0 +1,45 @@
+#include "cuf_macros.CUF"
+
+module mod1
+use params  ! Define matrix m, n, k
+contains
+  attributes(global) subroutine test1(a,b,c)
+  use wmma
+  real(2), device :: a(m,k)
+  real(2), device :: b(k,n)
+  real(2), device :: c(m,n)
+  WMMASubMatrix(WMMAMatrixA, 16, 16, 16, Real, WMMAColMajor) :: sa
+  WMMASubMatrix(WMMAMatrixB, 16, 16, 16, Real, WMMAColMajor) :: sb
+  WMMASubMatrix(WMMAMatrixC, 16, 16, 16, Real, WMMAKind2)    :: sc
+  WMMASubMatrix(WMMAMatrixC, 16, 16, 16, Real, WMMAKind2)    :: sd
+  real(2) :: x
+  sc = real(0, kind=2)
+  call wmmaLoadMatrix(sa, a(1,1), m)
+  call wmmaLoadMatrix(sb, b(1,1), k)
+  call wmmaMatmul(sd, sa, sb, sc)
+  x = real(-99.0, kind=2)
+! x = real(-99, kind=2)
+  call WMMAMerge(sc, x, sd, mask=sd.eq.sc)
+  call wmmaStoreMatrix(c(1,1), sc, m)
+  end subroutine
+end module
+
+subroutine volta(a,b,c)
+use params
+use cudafor
+use mod1
+real(4) :: a(m,k)
+real(4) :: b(k,n)
+real(4) :: c(m,n)
+
+real(2), managed :: da(m,k)
+real(2), managed :: db(k,n)
+real(2), managed :: dc(m,n)
+
+da = a
+db = b
+call test1<<<1,32>>>(da,db,dc)
+istat = cudaDeviceSynchronize()
+c  = dc
+
+end subroutine

@@ -1,0 +1,128 @@
+#define WMMAKind2 2
+#define WMMAKind4 4
+#define WMMAKind8 8
+
+#define WMMARowMajor 0
+#define WMMARowMajorKind2 0
+#define WMMARowMajorKind4 3
+#define WMMARowMajorKind8 7
+#define WMMAColMajor 1
+#define WMMAColMajorKind2 1
+#define WMMAColMajorKind4 4
+#define WMMAColMajorKind8 8
+
+#define N1     1
+#define N2     2
+#define N4     4
+#define N8     8
+#
+#define M16   16
+#define N16   16
+#define K16   16
+
+#define WMMAMatrixA A
+#define WMMAMatrixB B
+#define WMMAMatrixC C
+#define WMMAMatrixAcc C
+
+#define CUFReal2 type(WMMAHALF)
+ 
+!----------------------------------------------------------------------
+
+#ifdef DEBUG
+
+#define WMMAEXTRA_A20 subMatrixARmajor
+#define WMMAEXTRA_A21 subMatrixA
+#define WMMAEXTRA_A40 subMatrixARmajor
+#define WMMAEXTRA_A41 subMatrixA
+
+#define WMMAKINDS_A20 2
+#define WMMAKINDS_A21 2
+#define WMMAKINDS_A40 2
+#define WMMAKINDS_A41 2
+
+#define WMMAEXTRA_B20 subMatrixBRmajor
+#define WMMAEXTRA_B21 subMatrixB
+#define WMMAEXTRA_B40 subMatrixBRmajor
+#define WMMAEXTRA_B41 subMatrixB
+
+#define WMMAKINDS_B20 2
+#define WMMAKINDS_B21 2
+#define WMMAKINDS_B40 2
+#define WMMAKINDS_B41 2
+
+#define WMMAEXTRA_C20 subMatrixC
+#define WMMAEXTRA_C21 subMatrixC
+#define WMMAEXTRA_C40 subMatrixC
+#define WMMAEXTRA_C41 subMatrixC
+#define WMMAEXTRA_C42 subMatrixC
+#define WMMAEXTRA_C44 subMatrixC
+
+#define WMMAKINDS_C20 2
+#define WMMAKINDS_C21 2
+#define WMMAKINDS_C40 4
+#define WMMAKINDS_C41 4
+#define WMMAKINDS_C42 2
+#define WMMAKINDS_C44 4
+
+#define WMMAAFTER0(w,x,y,z) w ## x ## y ## z
+#define WMMAAFTER1(x,y,z) WMMAAFTER0(WMMAEXTRA_,x,y,z)
+#define WMMAAFTER2(x,y,z) WMMAAFTER0(WMMAKINDS_,x,y,z)
+
+#define WMMASubMatrixType(WMMATYPE,KIND,M,N,K) \
+  type(WMMATYPE ##(kind=##KIND,m=##M,n=##N,k=##K))
+#define WMMASubMatrix2(WMMATYPE,KIND,M,N,K) \
+  WMMASubMatrixType(WMMATYPE,KIND,M,N,K)
+#define WMMASubMatrix(WMMATYPE,M,N,K,EXTRA) \
+  WMMASubMatrix2(WMMAAFTER1(WMMATYPE,4,EXTRA),WMMAAFTER2(WMMATYPE,4,EXTRA),M,N,K)
+
+#else
+
+#define WMMAEXTRA_A0 2_Rmajor
+#define WMMAEXTRA_A1 2_Cmajor
+#define WMMAEXTRA_A2 2_Cmajor
+#define WMMAEXTRA_A3 4_Rmajor
+#define WMMAEXTRA_A4 4_Cmajor
+#define WMMAEXTRA_A7 8_Rmajor
+#define WMMAEXTRA_A8 8_Cmajor
+
+#define WMMAEXTRA_B0 2_Rmajor
+#define WMMAEXTRA_B1 2_Cmajor
+#define WMMAEXTRA_B2 2_Cmajor
+#define WMMAEXTRA_B3 4_Rmajor
+#define WMMAEXTRA_B4 4_Cmajor
+#define WMMAEXTRA_B7 8_Rmajor
+#define WMMAEXTRA_B8 8_Cmajor
+
+#define WMMAEXTRA_C1 1
+#define WMMAEXTRA_C2 2
+#define WMMAEXTRA_C4 4
+#define WMMAEXTRA_C8 8
+
+#define WMMAReal8 Real8
+
+#define WMMAAFTER1(x,y) WMMAEXTRA_ ## x ## y
+#define WMMAAFTER(x,y) WMMAAFTER1(x,y)
+
+#define WMMASubMatrixType(WMMATYPE,M,N,K,DTYPE,EXTRA) \
+  type(subMatrix ## WMMATYPE ##_m ## M ## n ## N ## k ## K ## _ ## DTYPE ## EXTRA)
+
+
+#define WMMASubMatrix2(WMMATYPE,EXTRAK,M,N,K,DTYPE) \
+  WMMASubMatrixType(WMMATYPE,M,N,K,DTYPE,EXTRAK)
+
+
+#define WMMASubMatrix(WMMATYPE,M,N,K,DTYPE,EXTRA) \
+  WMMASubMatrix2(WMMATYPE,WMMAAFTER(WMMATYPE,EXTRA),M,N,K,DTYPE)
+
+#endif
+
+!----------------------------------------------------------------------
+
+#ifdef DEBUG
+#define WMMAVectorType(X, Y, Z) type(CUF ## Y ## Vector(kind=##Z,length=##X))
+#define CUFVector(X, Y, Z) WMMAVectorType(X, Y, Z)
+#else
+#define WMMAVectorType(X, Y, Z) type(V ## X ## Y ## Z)
+#define CUFVector(X, Y, Z) WMMAVectorType(X, Y, Z)
+#endif

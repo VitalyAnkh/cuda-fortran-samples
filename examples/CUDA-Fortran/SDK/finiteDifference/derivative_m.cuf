@@ -1,0 +1,195 @@
+! 
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+! 
+
+module derivatives_m
+  use cudafor
+  use precision_m
+
+  type(dim3) :: grid(3), threadBlock(3)
+  real(fp_kind), constant :: ae_c(3), be_c(3), ce_c(3), de_c(3)
+ 
+  integer, parameter :: mx = 48, my = 48, mz = 48
+  integer, parameter :: nPencils = 4
+
+contains
+
+  ! host routine to set constant data
+
+  subroutine setDerivativeParameters()
+
+    implicit none
+
+    real(fp_kind) :: dsinv(3)
+
+    ! check to make sure dimensions are integral multiples of nPencils
+    if (mod(my,nPencils) /= 0) then
+       write(*,*) '"my" must be an integral multiple of nPencils'
+       stop
+    end if
+
+    if (mod(mx,nPencils) /= 0) then
+       write(*,*) '"mx" must be an integral multiple of nPencils (for y-deriv)'
+       stop
+    end if
+
+    if (mod(mz,nPencils) /= 0) then
+       write(*,*) '"mz" must be an integral multiple of nPencils (for z-deriv)'
+       stop
+    end if
+
+    ! stencil weights (for unit length problem, ds^{-1})
+
+    dsinv(1) = real(mx-1)
+    ae_c(1) =  4./  5. * dsinv(1)
+    be_c(1) = -1./  5. * dsinv(1)
+    ce_c(1) =  4./105. * dsinv(1)
+    de_c(1) = -1./280. * dsinv(1)
+
+    dsinv(2) = real(my-1)
+    ae_c(2) =  4./  5. * dsinv(2)
+    be_c(2) = -1./  5. * dsinv(2)
+    ce_c(2) =  4./105. * dsinv(2)
+    de_c(2) = -1./280. * dsinv(2)
+
+    dsinv(3) = real(mz-1)
+    ae_c(3) =  4./  5. * dsinv(3)
+    be_c(3) = -1./  5. * dsinv(3)
+    ce_c(3) =  4./105. * dsinv(3)
+    de_c(3) = -1./280. * dsinv(3)
+
+    ! Execution configurations
+
+    grid(1) = dim3(my/nPencils,mz,1)
+    grid(2) = dim3(mx/nPencils,mz,1)
+    grid(3) = dim3(mx/nPencils,my,1)
+    
+    threadBlock(1) = dim3(mx,nPencils,1)
+    threadBlock(2) = dim3(nPencils,my,1)
+    threadBlock(3) = dim3(nPencils,mz,1)
+
+  end subroutine setDerivativeParameters
+
+  ! ------------
+  ! x derivative
+  ! ------------
+
+  attributes(global) subroutine derivative_x(f, df)
+    implicit none
+
+    real(fp_kind), intent(in) :: f(:,:,:)
+    real(fp_kind), intent(out) :: df(:,:,:)
+
+    real(fp_kind), shared :: f_s(-3:mx+4,nPencils)
+
+    integer :: i,j,k,j_l
+
+    i = threadIdx%x
+    j = (blockIdx%x-1)*blockDim%y + threadIdx%y
+    j_l = threadIdx%y            ! local variant of j for accessing shared memory, = 1:nPencils
+    k = blockIdx%y
+
+    f_s(i,j_l) = f(i,j,k)
+
+    call syncthreads()
+
+    ! fill in periodic images in shared memory array 
+
+    if (i <= 4) then
+       f_s(i-4, j_l) = f_s(mx+i-5,j_l) 
+       f_s(mx+i,j_l) = f_s(i+1,   j_l)   
+    endif
+
+    call syncthreads()
+
+    df(i,j,k) = &
+         (ae_c(1) *( f_s(i+1,j_l) - f_s(i-1,j_l) )   &
+         +be_c(1) *( f_s(i+2,j_l) - f_s(i-2,j_l) )   &
+         +ce_c(1) *( f_s(i+3,j_l) - f_s(i-3,j_l) )   &
+         +de_c(1) *( f_s(i+4,j_l) - f_s(i-4,j_l) ))
+ 
+  end subroutine derivative_x
+
+  ! ------------
+  ! y derivative
+  ! ------------
+
+  attributes(global) subroutine derivative_y(f, df)
+    implicit none
+
+    real(fp_kind), intent(in) :: f(:,:,:)
+    real(fp_kind), intent(out) :: df(:,:,:)
+
+    real(fp_kind), shared :: f_s(-3:my+4,nPencils)
+
+    integer :: i,i_l,j,k
+
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    i_l = threadIdx%x
+    j = threadIdx%y
+    k = blockIdx%y
+
+    f_s(j,i_l) = f(i,j,k)
+
+    call syncthreads()
+
+    if (j <= 4) then
+       f_s(j-4, i_l) = f_s(my+j-5,i_l) 
+       f_s(my+j,i_l) = f_s(j+1,   i_l)   
+    endif
+
+    call syncthreads()
+
+    df(i,j,k) = &
+         (ae_c(2) *( f_s(j+1,i_l) - f_s(j-1,i_l) )   &
+         +be_c(2) *( f_s(j+2,i_l) - f_s(j-2,i_l) )   &
+         +ce_c(2) *( f_s(j+3,i_l) - f_s(j-3,i_l) )   &
+         +de_c(2) *( f_s(j+4,i_l) - f_s(j-4,i_l) ))
+ 
+  end subroutine derivative_y
+
+  ! ------------
+  ! z derivative
+  ! ------------
+
+  attributes(global) subroutine derivative_z(f, df)
+    implicit none
+
+    real(fp_kind), intent(in) :: f(:,:,:)
+    real(fp_kind), intent(out) :: df(:,:,:)
+
+    real(fp_kind), shared :: f_s(-3:mz+4,nPencils)
+
+    integer :: i,i_l,j,k
+
+    i = (blockIdx%x-1)*blockDim%x + threadIdx%x
+    i_l = threadIdx%x
+    j = blockIdx%y
+    k = threadIdx%y
+
+    f_s(k,i_l) = f(i,j,k)
+
+    call syncthreads()
+
+    if (k <= 4) then
+       f_s(k-4, i_l) = f_s(mz+k-5,i_l) 
+       f_s(mz+k,i_l) = f_s(k+1,   i_l)   
+    endif
+
+    call syncthreads()
+
+    df(i,j,k) = &
+         (ae_c(3) *( f_s(k+1,i_l) - f_s(k-1,i_l) )   &
+         +be_c(3) *( f_s(k+2,i_l) - f_s(k-2,i_l) )   &
+         +ce_c(3) *( f_s(k+3,i_l) - f_s(k-3,i_l) )   &
+         +de_c(3) *( f_s(k+4,i_l) - f_s(k-4,i_l) ))
+ 
+  end subroutine derivative_z
+
+end module derivatives_m

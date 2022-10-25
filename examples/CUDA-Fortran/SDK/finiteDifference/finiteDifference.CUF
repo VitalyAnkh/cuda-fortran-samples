@@ -1,0 +1,125 @@
+! 
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+! 
+
+#ifdef DEBUG
+#define CheckLaunchError(s) if(cudaDeviceSynchronize().ge.0)then;\
+associate(i => cudaGetLastError());\
+if(i.ne.0)then;\
+write(*,"('Error ',a,', File: ',a,', Line: ',i0)")s,__FILE__,__LINE__;\
+write(*,"(4x,a)")cudaGetErrorString(i);\
+stop;endif;\
+end associate;endif
+#else
+#define CheckLaunchError(s)
+#endif
+
+program derivativeTest
+  use cudafor
+  use precision_m
+  use derivatives_m
+
+  implicit none
+
+  real(fp_kind) :: f(mx,my,mz), df(mx,my,mz), sol(mx,my,mz)
+  real(fp_kind), device :: f_d(mx,my,mz), df_d(mx,my,mz)
+  integer :: i, j, k, nerrors
+  real(fp_kind) :: twopi, error, maxError
+
+  real(fp_kind), parameter :: fx = 1.0, fy = 1.0, fz = 1.0
+
+  nerrors = 0
+  twopi = 8.*atan(1.d0)
+  call setDerivativeParameters()
+
+  ! x-derivative
+    
+  do i = 1, mx
+     f(i,:,:) = cos(fx*twopi*(i-1.)/(mx-1))
+  enddo
+  f_d = f
+
+  call derivative_x<<<grid(1),threadBlock(1)>>>(f_d, df_d)
+  CheckLaunchError('derivative_x')
+  df = df_d
+  
+  do i = 1, mx
+     sol(i,:,:) = -fx*twopi*sin(fx*twopi*(i-1.)/(mx-1))
+  enddo
+  
+  error = sqrt(sum((sol-df)**2)/(mx*my*mz))
+  maxError = maxval(abs(sol-df))
+
+  write(*,*) 'x derivative'
+  write(*,*) '  RMS error: ', error
+  write(*,*) '  MAX error: ', maxError
+
+  if (maxError .gt. 2.0e-5) then
+     nerrors = nerrors + 1
+  endif
+
+  ! y-derivative
+    
+  do j = 1, my
+     f(:,j,:) = cos(fy*twopi*(j-1.)/(my-1))
+  enddo     
+  f_d = f
+
+  call derivative_y<<<grid(2), threadblock(2)>>>(f_d, df_d)
+  CheckLaunchError('derivative_y')
+  df = df_d  
+
+  do j = 1, my
+     sol(:,j,:) = -fy*twopi*sin(fy*twopi*(j-1.)/(my-1))
+  enddo
+  
+  error = sqrt(sum((sol-df)**2)/(mx*my*mz))
+  maxError = maxval(abs(sol-df))
+  
+  write(*,*) 'y derivative'
+  write(*,*) '  RMS error: ', error
+  write(*,*) '  MAX error: ', maxError
+
+  if (maxError .gt. 2.0e-5) then
+     nerrors = nerrors + 1
+  endif
+
+  ! z-derivative
+
+  do k = 1, mz
+     f(:,:,k) = cos(fz*twopi*(k-1.)/(mz-1))
+  enddo     
+  f_d = f
+
+  call derivative_z<<<grid(3),threadBlock(3)>>>(f_d, df_d)
+  CheckLaunchError('derivative_z')
+  df = df_d  
+
+  do k = 1, mz
+     sol(:,:,k) = -fz*twopi*sin(fz*twopi*(k-1.)/(mz-1))
+  enddo
+  
+  error = sqrt(sum((sol-df)**2)/(mx*my*mz))
+  maxError = maxval(abs(sol-df))
+
+  write(*,*) 'z derivative'
+  write(*,*) '  RMS error: ', error
+  write(*,*) '  MAX error: ', maxError
+
+  if (maxError .gt. 2.0e-5) then
+     nerrors = nerrors + 1
+  endif
+
+  if (nerrors .ne. 0) then
+     print *, "Test FAILED"
+  else
+     print *, "Test PASSED"
+  endif
+
+end program derivativeTest

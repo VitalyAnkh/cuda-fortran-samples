@@ -1,0 +1,134 @@
+! 
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+! 
+
+program deviceQuery
+  use cudafor
+  implicit none
+
+  type (cudaDeviceProp) :: prop
+  integer :: nDevices, nCoresPerMP, dVersion, rVersion
+  integer :: i, ilen, ierr
+  character(3) :: noYes(0:1) = (/ 'No', 'Yes' /)
+
+  ierr = cudaGetDeviceCount(nDevices)
+  if (ierr /= cudaSuccess) then
+     write(*,*) 'cudaGetDeviceCount failed -- CUDA driver and runtime may be mismatched' 
+     stop
+  end if
+  
+  if (nDevices == 0) then
+     write(*,*) 'No CUDA devices found'
+  else
+     do i = 0, nDevices-1
+
+        ierr = cudaGetDeviceProperties(prop, i)
+
+        if (i == 0) then
+           ierr = cudaDriverGetVersion(dVersion)
+           ierr = cudaRuntimeGetVersion(rVersion)
+
+           write(*,"('Driver version: ',i0,'.',i0)") dVersion/1000, mod(dVersion,100)
+           write(*,"('Runtime version: ',i0,'.',i0)") rVersion/1000, mod(rVersion,100)
+           write(*,*)
+           ilen = verify(prop%name, ' ', .true.)
+           if (prop%name(1:ilen).eq."DEVICE EMULATION MODE") then
+              write(*,*) 'No CUDA devices found - running in emulation mode'
+              stop
+           else if (nDevices == 1) then
+              write(*,*) 'One CUDA device found'
+           else 
+              write(*,"(1x,i0,' CUDA devices found')") nDevices
+           end if
+        end if
+        write(*,*)
+
+        write(*,"(' Device Number: ',i0)") i
+        ilen = verify(prop%name, ' ', .true.)
+        write(*,"('   Device name: ',a)") prop%name(1:ilen)
+        write(*,"('   Compute Capability: ',i0,'.',i0)") prop%major, prop%minor
+        write(*,"('   Number of Multiprocessors: ',i0)") prop%multiProcessorCount
+        if (prop%major < 2) then
+           nCoresPerMP = 8
+        else if (prop%major == 2) then
+           if (prop%minor < 1) then
+              nCoresPerMP = 32
+           else
+              nCoresPerMP = 48
+           endif
+        endif
+        write(*,"('   Number of Cores: ',i0)") nCoresPerMP*prop%multiProcessorCount
+        write(*,"('   Max Clock Rate (kHz): ',i0)") prop%clockRate
+        write(*,"('   Warpsize: ',i0)") prop%warpSize
+        write(*,*)
+       
+        ! settings
+
+        write(*,*) '   Settings'
+        select case (prop%computeMode)
+        case (0)
+           write(*,*) '     Compute Mode: Default'
+        case (1)
+           write(*,*) '     Compute Mode: Exclusive'
+        case (2)
+           write(*,*) '     Compute Mode: Prohibited'
+        end select
+        write(*,*) '     Runtime Limit on Kernels Enabled: ', noYes(prop%kernelExecTimeoutEnabled)
+        write(*,*) '     ECC Support Enabled: ', noYes(prop%ECCEnabled)
+        write(*,*)
+
+        ! Capabilities and features
+
+        write(*,*) '   Device Features/Capabilities'
+        write(*,*) '     Concurrent Copy and Kernel Execution: ', noYes(prop%deviceOverlap)
+        write(*,*) '     Concurrent Kernel Executions: ', noYes(prop%concurrentKernels)
+        write(*,*) '     Zero-Copy Capable: ', noYes(prop%canMapHostMemory)
+        write(*,*)
+
+        ! EC Limits
+
+        write(*,*) '   Execution Configuration Limits'
+        write(*,"('      Maximum Grid Dimensions: ',2(i0,' x '),i0)") prop%maxGridSize
+        write(*,"('      Maximum Block Dimensions: ',2(i0,' x '),i0)") prop%maxThreadsDim
+        write(*,"('      Maximum Threads per Block: ',i0)") prop%maxThreadsPerBlock
+        write(*,*)
+
+        ! Memory
+
+        write(*,*) '   Off-Chip Memory'
+        write(*,"('      Total Global Memory (B): ',i0)") prop%totalGlobalMem
+        write(*,"('      Total Constant Memory (B): ',i0)") prop%totalConstMem
+        write(*,"('      Maximum Memory Pitch for Copies (B): ',i0)") prop%memPitch
+        write(*,*) '     Integrated: ', noYes(prop%integrated)
+        write(*,*)
+
+        write(*,*) '   On-Chip Memory'
+        write(*,"('      Shared Memory per Multiprocessor (B): ',i0)") prop%sharedMemPerBlock
+        write(*,"('      Number of Registers per Multiprocessor: ',i0)") prop%regsPerBlock
+        write(*,*)
+
+        ! PCI 
+
+        write(*,*) '   PCI attributes'
+        write(*,"('      PCI Device ID: ',i0)") prop%pciDeviceID
+        write(*,"('      PCI Bus ID: ',i0)") prop%pciBusID
+        write(*,*)
+
+        ! Textures
+
+        write(*,*) '   Textures'
+        write(*,"('      Texture alignment: ',i0)") prop%textureAlignment
+        write(*,"('      Maximum 1D Texture Size: ',i0)") prop%maxTexture1D
+        write(*,"('      Maximum 2D Texture Size: ',i0,' x ',i0)") prop%maxTexture2D
+        write(*,"('      Maximum 3D Texture Size: ',2(i0,' x '),i0)") prop%maxTexture3D
+        write(*,*)
+     enddo
+     write(*,*) '  Test PASSED'
+  end if
+end program deviceQuery

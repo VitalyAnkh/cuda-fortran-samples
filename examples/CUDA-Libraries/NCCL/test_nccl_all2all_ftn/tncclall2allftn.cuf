@@ -1,0 +1,220 @@
+module all_to_all
+   use cudafor
+   use nccl
+   use mpi
+   implicit none
+
+   integer, parameter :: MPI_BACKEND=0, NCCL_BACKEND=1
+   integer :: mpi_rank, mpi_size, mpi_stat, cuda_stat, backend_type
+   type(ncclResult) :: nccl_stat
+   type(ncclUniqueId) :: nccl_uid
+   type(ncclComm) :: nccl_comm
+   integer(kind=cuda_stream_kind) :: nccl_stream
+
+   interface alltoall
+      module procedure alltoall_i4
+   end interface alltoall
+
+contains
+
+   subroutine check_mpi_stat(stat)
+      integer :: stat
+      if (stat .ne. 0) then
+         print *, "MPI Error Code:", stat
+         call EXIT(1)
+      endif
+   end subroutine check_mpi_stat
+
+   subroutine check_cuda_stat(stat)
+      integer :: stat
+      if (stat .ne. cudaSuccess) then
+         print *, "CUDA Error:", cudaGetErrorString(stat)
+         call EXIT(1)
+      endif
+   end subroutine check_cuda_stat
+
+   subroutine check_nccl_stat(stat)
+      type(ncclResult) :: stat
+      if (stat .ne. ncclSuccess) then
+         print *, "NCCL Error:", ncclGetErrorString(stat)
+         call EXIT(1)
+      endif
+   end subroutine check_nccl_stat
+
+   subroutine initialize(rank, world_size, backend)
+      implicit none
+      integer :: rank, world_size, backend
+
+      mpi_rank = rank
+      mpi_size = world_size
+      backend_type = backend
+      if (rank == 0) then
+         nccl_stat = ncclGetUniqueId(nccl_uid)
+         call check_nccl_stat(nccl_stat)
+      end if
+      call MPI_Bcast(nccl_uid, int( sizeof(ncclUniqueId), kind = 4 ), MPI_BYTE, 0, MPI_COMM_WORLD, mpi_stat)
+      call check_mpi_stat(mpi_stat)
+
+      nccl_stat = ncclCommInitRank(nccl_comm, mpi_size, nccl_uid, mpi_rank);
+      call check_nccl_stat(nccl_stat)
+
+      cuda_stat = cudaStreamCreate(nccl_stream);
+      call check_cuda_stat(cuda_stat)
+   end subroutine initialize
+
+   subroutine set_backend(backend)
+      integer :: backend
+      backend_type = backend
+   end subroutine set_backend
+
+   subroutine alltoall_i4 (send_buff, recv_buff, count)
+      integer, device :: send_buff(:)
+      integer, device :: recv_buff(:)
+      integer :: count, i
+
+      if (backend_type == MPI_BACKEND) then
+         call MPI_Alltoall(send_buff, count, MPI_INT, &
+                           recv_buff, count, MPI_INT, &
+                           MPI_COMM_WORLD, mpi_stat)
+         call check_mpi_stat(mpi_stat)
+      else if (backend_type == NCCL_BACKEND) then
+         nccl_stat = ncclGroupStart()
+         call check_nccl_stat(nccl_stat)
+
+         do i=0,mpi_size-1
+            nccl_stat = ncclSend(send_buff(1+i*count), count, ncclInt, i, nccl_comm, nccl_stream)
+            call check_nccl_stat(nccl_stat)
+            nccl_stat = ncclRecv(recv_buff(1+i*count), count, ncclInt, i, nccl_comm, nccl_stream)
+            call check_nccl_stat(nccl_stat)
+         end do
+
+         nccl_stat = ncclGroupEnd()
+         call check_nccl_stat(nccl_stat)
+
+         cuda_stat = cudaStreamSynchronize(nccl_stream)
+         call check_cuda_stat(cuda_stat)
+      else
+         print *, "Backend type should one of MPI_BACKEND (0) or NCCL_BACKEND (1)."
+      end if
+
+   end subroutine alltoall_i4
+
+end module all_to_all
+
+module all_to_all_test
+
+contains
+
+   subroutine verify( buffer_size, chunk_size, rank, buffer )
+   implicit none
+   integer, intent(in) :: buffer_size, chunk_size, rank
+   integer, intent(in) :: buffer( buffer_size )
+   integer :: i, shift
+   logical :: passing
+
+   shift   = rank * chunk_size
+   passing = .true.
+
+   do i = 1, buffer_size
+      if ( buffer(i) .ne. shift + mod( i - 1, chunk_size ) ) then
+         print*, "Mismatch", rank, buffer(i), shift + mod( i - 1, chunk_size )
+         passing = .false.
+         exit
+      endif
+   enddo
+
+   if ( passing ) then
+      print*, "test PASSED"
+   else
+      print*, "test FAILED"
+   endif
+   end subroutine verify
+
+end module all_to_all_test
+program main
+   use mpi
+   use cudafor
+   use all_to_all
+   use all_to_all_test
+
+   integer, parameter :: NUM_DATA_PER_PROC = 409600
+   integer :: istat, rank, world_size, device, total_data_size
+   real :: t1, t2, tt
+   integer, allocatable :: send_buff(:)
+   integer, allocatable :: recv_buff(:)
+   integer, allocatable, device :: send_buff_d(:)
+   integer, allocatable, device :: recv_buff_d(:)
+
+   call MPI_Init(istat)
+   call check_mpi_stat(istat)
+
+   call MPI_Comm_rank(MPI_COMM_WORLD, rank, istat)
+   call check_mpi_stat(istat)
+   call MPI_Comm_size(MPI_COMM_WORLD, world_size, istat)
+   call check_mpi_stat(istat)
+
+   istat = cudaSetDevice(rank)
+   call check_cuda_stat(istat)
+   istat = cudaGetDevice(device)
+   call check_cuda_stat(istat)
+   print *, "Rank:", rank, "/", world_size, "with device", device
+
+   call initialize(rank, world_size, MPI_BACKEND)
+
+   total_data_size = NUM_DATA_PER_PROC*world_size
+   allocate(send_buff(total_data_size))
+   allocate(recv_buff(total_data_size))
+   allocate(send_buff_d(total_data_size))
+   allocate(recv_buff_d(total_data_size))
+   do i=1,total_data_size
+      send_buff(i) = i - 1.0
+      recv_buff(i) = 0.0
+   end do
+
+   send_buff_d = send_buff
+   recv_buff_d = recv_buff
+
+
+   call set_backend(MPI_BACKEND)
+   ! warmup
+   do i=1,100
+      call alltoall(send_buff_d, recv_buff_d, NUM_DATA_PER_PROC)
+   end do
+
+   ! profile
+   call cpu_time(t1)
+   do i=1,100
+      call alltoall(send_buff_d, recv_buff_d, NUM_DATA_PER_PROC)
+   end do
+   call cpu_time(t2)
+   tt = (t2 - t1) / 100
+
+   if (rank == 0) then
+      print *, "Total MPI Time: ",tt*1000 , "ms"
+   end if
+
+   call set_backend(NCCL_BACKEND)
+   ! warmup
+   do i=1,100
+      call alltoall(send_buff_d, recv_buff_d, NUM_DATA_PER_PROC)
+   end do
+
+   ! profile
+   call cpu_time(t1)
+   do i=1,100
+      call alltoall(send_buff_d, recv_buff_d, NUM_DATA_PER_PROC)
+   end do
+   call cpu_time(t2)
+   tt = (t2 - t1) / 100
+
+   if (rank == 0) then
+      print *, "Total NCCL Time: ",tt*1000 , "ms"
+   end if
+
+   recv_buff = recv_buff_d
+   call verify( total_data_size, NUM_DATA_PER_PROC, rank, recv_buff )
+
+   call MPI_Finalize(istat)
+   call check_mpi_stat(istat)
+
+end program main

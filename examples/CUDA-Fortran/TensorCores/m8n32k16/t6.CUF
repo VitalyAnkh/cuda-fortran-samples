@@ -1,0 +1,60 @@
+module params
+  integer, parameter :: m = 8
+  integer, parameter :: n = 32
+  integer, parameter :: k = 16
+end module
+
+!-----------------------------
+program t1
+use params
+real(4) :: a(m,k)
+real(4) :: b(k,n)
+real(4) :: c(m,n), d(m,n)
+
+call random_number(a)
+a = int(a*8.0-4.0)
+
+call random_number(b)
+b = int(b*8.0-4.0)
+
+call host(a,b,c)
+call volta(a,b,d)
+
+call verify(c,d)
+
+end program
+
+!-----------------------------
+subroutine host(a,b,c)
+use params
+real(4) :: a(m,k)
+real(4) :: b(k,n)
+real(4) :: c(m,n)
+
+c = matmul(a,b)
+c = merge(-99.0, c, c.ne.0.0)
+
+end subroutine
+
+!-----------------------------
+subroutine verify(c,d)
+use params
+use check_mod
+real(4) :: c(m,n), d(m,n)
+
+#ifdef VERBOSE
+print *,"From verify, C:"
+do i = 1, m
+  write(6,100) (c(i,j),j=1,n)
+end do
+
+print *,"From verify, D:"
+do i = 1, m
+  write(6,100) (d(i,j),j=1,n)
+end do
+#endif
+
+call check(d, c, n*m)
+
+100 format(16(1x,f4.0))
+end subroutine

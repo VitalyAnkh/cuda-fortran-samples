@@ -1,0 +1,133 @@
+program sparseMatVec
+  use cusparse
+  use cudafor
+
+  implicit none
+
+  integer, parameter :: n = 25 ! # rows/cols in dense matrix
+
+  type(cusparseHandle) :: h
+  type(cusparseMatDescr) :: descrA
+#if CUDA_VERSION >= 11000
+  integer(8) :: bsize
+  integer(1), device, allocatable :: buffer(:)
+  type(cusparseSpMatDescr) :: matA
+  type(cusparseDnVecDescr) :: vecX, vecY
+#endif
+
+  ! dense data
+  real(4) :: Ade(n,n), x(n), y(n)
+  real(4), device :: Ade_d(n,n), x_d(n), y_d(n)
+  
+  ! sparse CSR arrays
+  real(4), device :: csrValA_d(n) 
+  integer, device :: nnzPerRowA_d(n), &
+       csrRowPtrA_d(n+1), csrColIndA_d(n)
+  integer :: nnz, status, i
+
+  ! parameters
+  real(4) :: alpha, beta
+  
+  ! initalize CUSPARSE and matrix descriptor  
+  status = cusparseCreate(h)
+  if (status /= CUSPARSE_STATUS_SUCCESS) &
+       write(*,*) 'cusparseCreate error: ', status
+  status = cusparseCreateMatDescr(descrA)
+  status = cusparseSetMatType(descrA, &
+       CUSPARSE_MATRIX_TYPE_GENERAL)
+  status = cusparseSetMatIndexBase(descrA, &
+       CUSPARSE_INDEX_BASE_ONE)
+  
+  ! Initialize matrix (upper circular shift matrix)
+  Ade = 0.0  
+  do i = 1, n-1
+     Ade(i,i+1) = 1.0          
+  end do
+  Ade(n,1) = 1.0
+  Ade_d = Ade
+
+  ! Initialize vectors and constants
+  do i = 1, n
+     x(i) = i
+  enddo
+  x_d = x
+  y_d = 0.0
+
+  write(*,*) 'Original vector:'
+  write(*,'(5(1x,f7.2))') x
+
+  ! convert matrix from dense to csr format
+  status = cusparseSnnz_v2(h, CUSPARSE_DIRECTION_ROW, &
+       n, n, descrA, Ade_d, n, nnzPerRowA_d, nnz) 
+  status = cusparseSdense2csr(h, n, n, descrA, Ade_d, n, &
+       nnzPerRowA_d, csrValA_d, csrRowPtrA_d, csrColIndA_d)
+
+  ! A is upper circular shift matrix
+  ! y = alpha*A*x + beta*y
+  alpha = 1.0
+  beta = 0.0
+#if CUDA_VERSION <= 10020
+  status = cusparseScsrmv(h, CUSPARSE_OPERATION_NON_TRANSPOSE, &
+       n, n, n, alpha, descrA, csrValA_d, csrRowPtrA_d, &
+       csrColIndA_d, x_d, beta, y_d)
+#else
+  status = cusparseCreateDnVec(vecX, n, x_d, CUDA_R_32F)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseCreateDnVec: ",status
+
+  status = cusparseCreateDnVec(vecY, n, y_d, CUDA_R_32F)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseCreateDnVec: ",status
+
+  status = cusparseCreateCsr(matA, n, n, nnz, csrRowPtrA_d, csrColIndA_d, &
+             csrValA_d, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, &
+             CUSPARSE_INDEX_BASE_ONE, CUDA_R_32F)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseCreateCsr: ",status
+
+  status = cusparseSpMV_buffersize(h, CUSPARSE_OPERATION_NON_TRANSPOSE, alpha, &
+           matA, vecX, beta, vecY, CUDA_R_32F, CUSPARSE_CSRMV_ALG1, bsize)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseSpMV_buffersize: ",status
+
+  print *,"SpMV buffersize required: ",bsize
+  if (bsize.gt.0) allocate(buffer(bsize))
+
+  status = cusparseSpMV(h, CUSPARSE_OPERATION_NON_TRANSPOSE, alpha, &
+           matA, vecX, beta, vecY, CUDA_R_32F, CUSPARSE_CSRMV_ALG1, buffer)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseSpMV: ",status
+  if (bsize.gt.0) deallocate(buffer)
+#endif
+
+  y = y_d
+  write(*,*) 'Shifted vector:'
+  write(*,'(5(1x,f7.2))') y
+
+  ! shift-down y and add original x
+  ! A' is lower circular shift matrix
+  ! x = alpha*A'*y + beta*x
+  beta = -1.0
+#if CUDA_VERSION <= 10020
+  status = cusparseScsrmv(h, CUSPARSE_OPERATION_TRANSPOSE, &
+       n, n, n, alpha, descrA, csrValA_d, csrRowPtrA_d, &
+       csrColIndA_d, y_d, beta, x_d)
+#else
+
+  status = cusparseSpMV_buffersize(h, CUSPARSE_OPERATION_TRANSPOSE, alpha, &
+           matA, vecY, beta, vecX, CUDA_R_32F, CUSPARSE_CSRMV_ALG1, bsize)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseSpMV_buffersize: ",status
+
+  print *,"SpMV buffersize required: ",bsize
+  if (bsize.gt.0) allocate(buffer(bsize))
+
+  status = cusparseSpMV(h, CUSPARSE_OPERATION_TRANSPOSE, alpha, &
+           matA, vecY, beta, vecX, CUDA_R_32F, CUSPARSE_CSRMV_ALG1, buffer)
+  if (status.ne.CUSPARSE_STATUS_SUCCESS) print *,"cusparseSpMV: ",status
+  if (bsize.gt.0) deallocate(buffer)
+#endif
+  x = x_d
+  write(*,*) 'Max error = ', maxval(abs(x))
+
+  if (maxval(abs(x)).le.1.e-5) then
+    write(*,*) 'Test PASSED'
+  else
+    write(*,*) 'Test FAILED'
+  endif
+
+end program sparseMatVec

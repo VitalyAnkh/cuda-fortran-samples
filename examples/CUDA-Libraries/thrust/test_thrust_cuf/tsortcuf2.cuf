@@ -1,0 +1,66 @@
+module sorting
+  interface select_sort
+    module procedure select_sortr
+  end interface
+  contains
+    function select_sortr(array, elements) result(res)
+    interface
+      subroutine ssortf(array, idx, n) bind(C,name='thrust_float_sort_wrapper')
+      real, device, dimension(*) :: array
+      integer, device, dimension(*), intent(out) :: idx
+      integer, value :: n
+      end subroutine
+    end interface
+    real, device, intent(in) :: array(:)
+    integer, device, optional, intent(in) :: elements(:)
+    real, allocatable, managed :: res(:)
+    integer, device :: idx(size(array)) ! automatic
+    m = size(array)
+    call ssortf(array, idx, m)
+    if (present(elements)) then
+      ! Just gather the specified elements
+      n = size(elements)
+      allocate(res(n))
+      !$cuf kernel do
+      do i = 1, n
+        res(i) = array(1+idx(elements(i)))
+      end do
+    else
+      ! Return them all
+      allocate(res(m))
+      !$cuf kernel do
+      do i = 1, n
+        res(i) = array(1+idx(i))
+      end do
+    end if
+    ! Need this when we don't do a synchronous copy of the result!
+    istat = cudaDeviceSynchronize()
+    end function
+end module
+
+program t
+use sorting
+integer, parameter :: n = 100, m = 12
+real, managed :: a(n)
+integer, managed :: elems(m)
+real b(m)
+logical passing
+call random_number(a)
+elems = [(i,i=1,m-2),n-1,n]
+b = select_sort(a,elems)
+print *,"Original array a:"
+print *,a
+print *,"Selected elements b:"
+print *,b
+elems = n/2
+print *,"Middle element: ",select_sort(a,elems(1:1))
+passing = .true.
+do i = 1, m
+  passing = passing .and. any(a.eq.b(i))
+end do
+if (passing) then
+  print *,"Test PASSED"
+else
+  print *,"Test FAILED"
+endif
+end

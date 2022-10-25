@@ -1,0 +1,98 @@
+! 
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+! 
+
+!*     Simple test of cuf kernel, comparing to global subroutine
+!*     two-dimensional input and output arrays
+
+	module m1
+	  implicit none
+	  contains
+	  subroutine sub1( da, db, n1, n2 )
+            ! The Fortran plus cuf kernel way
+	    real, device :: da(:,:), db(:,:)
+	    integer :: i, j, n1, n2
+!$cuf kernel do (2) <<< (1,*),(64,1) >>>
+	    do j = 1,n2
+	      do i = 1,n1
+	        db(i,j) = db(i,j) + da(i,j) * da(i,j)
+	      enddo
+	    enddo
+	  end subroutine
+
+	  attributes(global) subroutine sub2( da, db, n1, n2 )
+            ! The CUDA Fortran way
+	    real, device :: da(:,:), db(:,:)
+	    integer, value :: n1, n2
+	    integer :: i, j
+	    j = blockidx%x
+	    if( j <= n2 ) then
+	      do i = threadidx%x, n1, blockdim%x
+	        db(i,j) = db(i,j) + da(i,j) * da(i,j)
+	      enddo
+	    endif
+	  end subroutine
+	end module
+
+	program p
+	use m1
+	implicit none
+
+	real, allocatable :: a(:,:), b0(:,:), b1(:,:), b2(:,:)
+	real, device, allocatable :: da(:,:), db0(:,:), db1(:,:)
+        real rmax1, rmax2
+	integer :: n1, n2
+	integer :: i,j
+	real :: ax
+
+	n1 = 200
+	n2 = 50
+
+	allocate( a(1:n1,1:n2), b0(1:n1,1:n2), b1(1:n1,1:n2), b2(1:n1,1:n2) )
+	allocate( da(1:n1,1:n2), db0(1:n1,1:n2), db1(1:n1,1:n2) )
+
+	ax = 0.0
+	do j = 1,n2
+	  do i = 1,n1
+	    a(i,j) = ax
+	    ax = ax + 1.0001
+	    if( ax > 100.0 ) ax = ax - 200.0
+	  enddo
+	enddo
+
+	da = a
+	db0 = 1.0
+	db1 = 1.0
+	 b2 = 1.0
+
+	call sub1( da, db0, n1, n2 )
+	b0 = db0
+
+	call sub2<<< n2, 64 >>>( da, db1, n1, n2 )
+	b1 = db1
+
+	do j = 1,n2
+	    do i = 1,n1
+	        b2(i,j) = b2(i,j) + a(i,j) * a(i,j)
+	    enddo
+	enddo
+
+        rmax1 = maxval(abs(b2-b0))
+        rmax2 = maxval(abs(b2-b1))
+
+        print *,"Max diff from cuf kernel is ",rmax1
+        print *,"Max diff from global subroutine is ",rmax2
+ 
+        if (rmax1 .ne. rmax2) then
+            print *,"Test FAILED"
+        else
+            print *,"Test PASSED"
+        endif
+
+	end

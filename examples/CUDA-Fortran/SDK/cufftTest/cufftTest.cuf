@@ -1,0 +1,95 @@
+! 
+!     Copyright (c) 2017, NVIDIA CORPORATION.  All rights reserved.
+!
+! NVIDIA CORPORATION and its licensors retain all intellectual property
+! and proprietary rights in and to this software, related documentation
+! and any modifications thereto.  Any use, reproduction, disclosure or
+! distribution of this software and related documentation without an express
+! license agreement from NVIDIA CORPORATION is strictly prohibited.
+! 
+
+program cufftTest
+  use precision_m
+  use cufft_m
+
+  implicit none
+
+  complex(fp_kind), allocatable :: a(:),b(:)
+  complex(fp_kind), device, allocatable :: a_d(:), b_d(:)
+  integer i
+  integer :: nerrors
+
+  integer :: n=8
+  integer :: plan, planType
+
+  ! allocate arrays on the host
+  allocate(a(n), b(n))
+
+  ! allocate arrays on the device
+  allocate(a_d(n), b_d(n))
+
+  !initialize arrays on host
+  do i = 1, n
+    a(i) = cmplx(cos((i-1) * atan2(0.0,-1.0) / n), 0.0)
+  end do
+
+  !copy arrays to device
+  a_d = a
+
+  ! Print initial array
+  print *, "Array A:"
+  write (*,"(8('(',f6.3,',',f6.3,')',1x))") a
+
+  ! set planType to either single or double precision
+  if (fp_kind == singlePrecision) then
+     planType = CUFFT_C2C
+  else
+     planType = CUFFT_Z2Z
+  endif
+
+  ! initialize the plan and execute the FFTs.
+
+  call cufftPlan1D(plan,n,planType,1)
+  call cufftExec(plan,planType,a_d,b_d,CUFFT_FORWARD)
+
+  ! Copy results back to host
+  b = b_d
+  print *, "Forward B"
+  write (*,"(8('(',f6.3,',',f6.3,')',1x))") b
+
+  call cufftExec(plan,planType,b_d,b_d,CUFFT_INVERSE)
+
+  ! Copy results back to host
+  b = b_d
+  print *, "Inverse B"
+  write (*,"(8('(',f6.3,',',f6.3,')',1x))") b
+
+  ! Scale
+  b = b / n
+  print *, "Scaled B"
+  write (*,"(8('(',f6.3,',',f6.3,')',1x))") b
+
+  nerrors = 0
+  do i = 1, n
+     if ( abs(real(a(i)) - real(b(i))) .gt. 2.0e-7 ) then
+        nerrors = nerrors + 1
+     endif
+     if ( abs(imag(a(i)) - imag(b(i))) .gt. 2.0e-7 ) then
+        nerrors = nerrors + 1
+     endif
+  enddo
+
+  if (nerrors .ne. 0) then
+     print *, "Test FAILED"
+  else
+     print *, "Test PASSED"
+  endif 
+
+  !release memory on the host and device
+  deallocate(a, b, a_d, b_d)
+
+  ! Destroy the plan
+  call cufftDestroy(plan)
+
+end program cufftTest
+
