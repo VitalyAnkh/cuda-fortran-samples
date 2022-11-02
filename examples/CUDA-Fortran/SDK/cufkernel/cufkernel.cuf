@@ -29,12 +29,15 @@
 	  attributes(global) subroutine sub2( da, db, n1, n2 )
             ! The CUDA Fortran way
 	    real, device :: da(:,:), db(:,:)
+	    integer, device, allocatable :: my_var(:)
 	    integer, value :: n1, n2
 	    integer :: i, j
+	    allocate( my_var(blockdim%x) )
 	    j = blockidx%x
 	    if( j <= n2 ) then
 	      do i = threadidx%x, n1, blockdim%x
 	        db(i,j) = db(i,j) + da(i,j) * da(i,j)
+		    print *, 'i, j=',i,j, my_var(j)
 	      enddo
 	    endif
 	  end subroutine

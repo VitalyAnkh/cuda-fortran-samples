@@ -19,6 +19,10 @@ contains
     integer, intent(inout) :: a(:)
     integer, value :: b
     integer :: i, n
+    integer, allocatable :: my_test(:)
+
+    allocate(my_test(10))
+    ! print *, my_test[0]
 
     i = blockDim%x*(blockIdx%x-1) + threadIdx%x
     n = size(a)
