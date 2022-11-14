@@ -10,8 +10,14 @@ program main
     implicit none
 
     external square_cube ! external subroutine
-    integer :: isq, icub
+    integer :: isquare, icube
+    integer, allocatable :: my_var(:)
+    allocate(my_var(10))
 
-    call square_cube(4.0, isq, icub)
-    print *, "i,i^2,i^3=", 4, isq, icub
+    my_var(:) = 1
+
+    print *, my_var(:)
+
+    call square_cube(4.0, isquare, icube)
+    print *, "i,i^2,i^3=", 4, isquare, icube
 end program
